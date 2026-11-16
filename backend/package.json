@@ -15,6 +15,7 @@
     "status": "pm2 status"
   },
   "dependencies": {
+    "@prisma/client": "^6.19.3",
     "adm-zip": "^0.6.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
@@ -30,6 +31,7 @@
     "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.0"
+    "nodemon": "^3.1.0",
+    "prisma": "^6.19.3"
   }
 }

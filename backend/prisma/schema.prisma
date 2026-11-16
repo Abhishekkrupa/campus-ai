@@ -1,0 +1,414 @@
+// CAMPUS AI — PostgreSQL staging schema for MongoDB-to-Prisma migration.
+// Preserve MongoDB _id as a String id. Supply original ids during data import.
+// ObjectId references are String columns at this stage; add foreign keys after data audit.
+// PostgreSQL String[] stores simple arrays; Json stores embedded documents.
+// Mongoose middleware, validation, and text search must be migrated separately.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Activity {
+  id         String   @id
+  user       String
+  type       String
+  targetType String   @default("")
+  targetId   String?
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([user, createdAt(sort: Desc)])
+}
+
+model AIConversation {
+  id        String   @id
+  user      String
+  title     String   @default("New conversation")
+  noteId    String?
+  context   String   @default("chat")
+  messages  String[] @default([])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AIMessage {
+  id           String   @id
+  conversation String
+  role         String
+  content      String
+  sources      String[] @default([])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([conversation])
+}
+
+model Analytics {
+  id        String   @id
+  date      String
+  metric    String
+  value     Float    @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([date, metric])
+}
+
+model Article {
+  id            String   @id
+  author        String
+  title         String
+  subtitle      String   @default("")
+  content       String   @default("")
+  cover         String   @default("")
+  tags          String[] @default([])
+  subject       String   @default("")
+  views         Int      @default(0)
+  likesCount    Int      @default(0)
+  commentsCount Int      @default(0)
+  sharesCount   Int      @default(0)
+  readingTime   Float    @default(0)
+  status        String   @default("published")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([author, createdAt(sort: Desc)])
+}
+
+model Bookmark {
+  id         String   @id
+  user       String
+  targetType String
+  targetId   String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([user, targetType, targetId])
+}
+
+model Category {
+  id          String   @id
+  name        String   @unique
+  type        String   @default("content")
+  description String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Comment {
+  id         String   @id
+  author     String
+  targetType String
+  targetId   String
+  content    String
+  parent     String?
+  likesCount Int      @default(0)
+  status     String   @default("active")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([targetType, targetId, createdAt(sort: Desc)])
+  @@index([parent])
+}
+
+model Connection {
+  id        String   @id
+  requester String
+  recipient String
+  status    String   @default("pending")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([requester, recipient])
+}
+
+model Conversation {
+  id            String   @id
+  participants  String[] @default([])
+  lastMessage   String   @default("")
+  lastMessageAt DateTime @default(now())
+  createdBy     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model CreatorProfile {
+  id                  String   @id
+  user                String   @unique
+  category            String   @default("")
+  expertise           String[] @default([])
+  subjects            String[] @default([])
+  bio                 String   @default("")
+  tagline             String   @default("")
+  followersCount      Int      @default(0)
+  views               Int      @default(0)
+  totalWatchTime      Float    @default(0)
+  totalDownloads      Int      @default(0)
+  resourcesCount      Int      @default(0)
+  isVerified          Boolean  @default(false)
+  verificationRequest Json     @default("{\"requested\":false,\"reason\":\"\"}")
+  socialLinks         Json     @default("{}")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model Department {
+  id             String   @id
+  name           String
+  code           String   @unique
+  description    String   @default("")
+  color          String   @default("#7c5cff")
+  icon           String   @default("")
+  resourcesCount Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model Flashcard {
+  id        String   @id
+  owner     String
+  title     String   @default("")
+  subject   String   @default("")
+  cards     Json     @default("[]")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Follow {
+  id        String   @id
+  follower  String
+  following String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([follower, following])
+}
+
+model Like {
+  id         String   @id
+  user       String
+  targetType String
+  targetId   String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([user, targetType, targetId])
+}
+
+model Message {
+  id             String   @id
+  conversation   String
+  sender         String
+  content        String   @default("")
+  attachment     String   @default("")
+  attachmentType String   @default("")
+  fileName       String   @default("")
+  resourceId     String?
+  read           Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([conversation, createdAt])
+}
+
+model Note {
+  id            String   @id
+  author        String
+  title         String
+  description   String   @default("")
+  subject       String   @default("")
+  department    String   @default("")
+  fileUrl       String   @default("")
+  fileType      String   @default("pdf")
+  fileSize      Float    @default(0)
+  pageCount     Int      @default(0)
+  tags          String[] @default([])
+  extractedText String   @default("")
+  downloads     Int      @default(0)
+  likesCount    Int      @default(0)
+  savesCount    Int      @default(0)
+  views         Int      @default(0)
+  status        String   @default("active")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([author, createdAt(sort: Desc)])
+  @@index([subject])
+}
+
+model Notification {
+  id        String   @id
+  user      String
+  type      String
+  category  String   @default("Social")
+  actor     String?
+  title     String   @default("")
+  message   String   @default("")
+  link      String   @default("")
+  read      Boolean  @default(false)
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([user, read, createdAt(sort: Desc)])
+}
+
+model Playlist {
+  id          String   @id
+  owner       String
+  title       String
+  description String   @default("")
+  type        String   @default("playlist")
+  items       String[] @default([])
+  notes       String[] @default([])
+  isPublic    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Post {
+  id            String   @id
+  author        String
+  type          String   @default("text")
+  content       String   @default("")
+  media         String[] @default([])
+  tags          String[] @default([])
+  subject       String   @default("")
+  department    String   @default("")
+  likesCount    Int      @default(0)
+  commentsCount Int      @default(0)
+  sharesCount   Int      @default(0)
+  savesCount    Int      @default(0)
+  views         Int      @default(0)
+  status        String   @default("active")
+  isPinned      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([author, createdAt(sort: Desc)])
+  @@index([tags], type: Gin)
+}
+
+model Quiz {
+  id          String   @id
+  creator     String
+  title       String
+  description String   @default("")
+  subject     String   @default("")
+  questions   Json     @default("[]")
+  attempts    Int      @default(0)
+  status      String   @default("published")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Recommendation {
+  id         String   @id
+  user       String
+  targetType String
+  targetId   String
+  score      Float    @default(0)
+  source     String   @default("tf-idf")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([user, targetType])
+}
+
+model Report {
+  id          String   @id
+  reportedBy  String
+  targetType  String
+  targetId    String
+  category    String
+  description String   @default("")
+  status      String   @default("pending")
+  adminNote   String   @default("")
+  handledBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status, createdAt(sort: Desc)])
+}
+
+model Subject {
+  id             String   @id
+  name           String
+  code           String   @default("")
+  department     String?
+  description    String   @default("")
+  resourcesCount Int      @default(0)
+  createdBy      String?
+  institution    String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model User {
+  id                 String   @id
+  name               String
+  username           String   @unique
+  email              String   @unique
+  password           String
+  avatar             String   @default("")
+  coverImage         String   @default("")
+  phone              String   @default("")
+  accountType        String   @default("STUDENT")
+  role               String   @default("STUDENT")
+  department         String   @default("")
+  college            String   @default("")
+  instituteName      String   @default("")
+  course             String   @default("")
+  semester           String   @default("")
+  bio                String   @default("")
+  skills             String[] @default([])
+  subjects           String[] @default([])
+  followersCount     Int      @default(0)
+  followingCount     Int      @default(0)
+  connectionsCount   Int      @default(0)
+  isVerified         Boolean  @default(false)
+  verificationStatus String   @default("none")
+  status             String   @default("active")
+  education          Json     @default("[]")
+  experience         Json     @default("[]")
+  projects           Json     @default("[]")
+  certifications     Json     @default("[]")
+  achievements       String[] @default([])
+  creatorId          String?
+  storage            Json     @default("{}")
+  gamification       Json     @default("{\"xp\":0,\"level\":1,\"streaks\":0,\"badges\":[]}")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([phone])
+}
+
+model Video {
+  id            String   @id
+  creator       String
+  title         String
+  description   String   @default("")
+  videoUrl      String   @default("")
+  thumbnail     String   @default("")
+  duration      Float    @default(0)
+  subject       String   @default("")
+  department    String   @default("")
+  tags          String[] @default([])
+  views         Int      @default(0)
+  likesCount    Int      @default(0)
+  commentsCount Int      @default(0)
+  sharesCount   Int      @default(0)
+  savesCount    Int      @default(0)
+  status        String   @default("active")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([creator, createdAt(sort: Desc)])
+  @@index([subject])
+}
