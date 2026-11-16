@@ -1,5 +1,5 @@
 const express = require('express');
-const { register, login, getMe } = require('../controllers/authController');
+const { register, login, getMe } = require('../controllers/prismaAuthController');
 const protect = require('../middleware/auth');
 const { authLimiter } = require('../middleware/rateLimiter');
 const router = express.Router();

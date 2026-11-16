@@ -2,11 +2,11 @@ const express = require('express');
 const protect = require('../middleware/auth');
 const upload = require('../middleware/upload');
 const { storage } = require('../services/StorageService');
-const { User } = require('../models');
+const { prisma, userId: reqUserId } = require('../utils/prisma');
 const config = require('../config');
 const router = express.Router();
 
-const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
 const VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo'];
 
 const isImage = (file) => file && IMAGE_TYPES.includes(file.mimetype);
@@ -52,7 +52,7 @@ router.post('/avatar', protect, upload.single('file'), async (req, res) => {
       mimetype: req.file.mimetype,
       originalname: req.file.originalname,
     });
-    await User.updateOne({ _id: req.user._id }, { avatar: result.url });
+    await prisma.user.update({ where: { id: reqUserId(req) }, data: { avatar: result.url } });
     res.status(201).json(result);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -66,7 +66,7 @@ router.post('/cover', protect, upload.single('file'), async (req, res) => {
       mimetype: req.file.mimetype,
       originalname: req.file.originalname,
     });
-    await User.updateOne({ _id: req.user._id }, { coverImage: result.url });
+    await prisma.user.update({ where: { id: reqUserId(req) }, data: { coverImage: result.url } });
     res.status(201).json(result);
   } catch (err) {
     res.status(500).json({ message: err.message });

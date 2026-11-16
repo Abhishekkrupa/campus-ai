@@ -1,24 +1,25 @@
-const { Video, Like, Bookmark, Notification, Activity, User, CreatorProfile, Playlist } = require('../models');
+const { prisma, createId, userId: reqUserId } = require('../utils/prisma');
 const { toString, toInt } = require('../utils/sanitize');
+
+const populateCreator = async (items) => {
+  const arr = Array.isArray(items) ? items : [items];
+  const ids = [...new Set(arr.map((v) => v.creator).filter(Boolean))];
+  const users = ids.length ? await prisma.user.findMany({ where: { id: { in: ids } } }) : [];
+  const map = Object.fromEntries(users.map((u) => [u.id, { _id: u.id, name: u.name, username: u.username, avatar: u.avatar, bio: u.bio, department: u.department, isVerified: u.isVerified, role: u.role }]));
+  const apply = (v) => ({ ...v, _id: v.id, creator: map[v.creator] || v.creator });
+  return Array.isArray(items) ? arr.map(apply) : apply(arr[0]);
+};
 
 const createVideo = async (req, res) => {
   try {
+    const uid = reqUserId(req);
     const { title, description, videoUrl, thumbnail, duration, subject, department, tags } = req.body;
     if (!title) return res.status(400).json({ message: 'Title required' });
-    const video = await Video.create({
-      creator: req.user._id,
-      title,
-      description,
-      videoUrl,
-      thumbnail,
-      duration,
-      subject,
-      department,
-      tags,
-    });
-    await CreatorProfile.findOneAndUpdate({ user: req.user._id }, { $inc: { resourcesCount: 1 } });
-    await Activity.create({ user: req.user._id, type: 'create_video', targetType: 'Video', targetId: video._id, metadata: { title, subject, tags } });
-    res.status(201).json(video);
+    const video = await prisma.video.create({ data: { id: createId(), creator: uid, title, description: description || '', videoUrl: videoUrl || '', thumbnail: thumbnail || '', duration: Number(duration) || 0, subject: subject || '', department: department || '', tags: tags || [] } });
+    const cp = await prisma.creatorProfile.findUnique({ where: { user: uid } }).catch(() => null);
+    if (cp) await prisma.creatorProfile.update({ where: { id: cp.id }, data: { resourcesCount: { increment: 1 } } }).catch(() => {});
+    await prisma.activity.create({ data: { id: createId(), user: uid, type: 'create_video', targetType: 'Video', targetId: video.id, metadata: { title, subject, tags } } }).catch(() => {});
+    res.status(201).json({ ...video, _id: video.id });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -26,16 +27,19 @@ const createVideo = async (req, res) => {
 
 const getVideo = async (req, res) => {
   try {
-    const video = await Video.findOneAndUpdate({ _id: req.params.id, status: 'active' }, { $inc: { views: 1 } }, { new: true }).populate('creator', 'name username avatar bio department isVerified role');
-    if (!video) return res.status(404).json({ message: 'Video not found' });
-    await CreatorProfile.findOneAndUpdate({ user: video.creator._id }, { $inc: { views: 1 } });
-    const data = video.toObject();
-    if (req.user) {
-      data.liked = !!(await Like.findOne({ user: req.user._id, targetType: 'Video', targetId: video._id }));
-      data.saved = !!(await Bookmark.findOne({ user: req.user._id, targetType: 'Video', targetId: video._id }));
+    const uid = reqUserId(req);
+    const video = await prisma.video.findUnique({ where: { id: req.params.id } });
+    if (!video || video.status !== 'active') return res.status(404).json({ message: 'Video not found' });
+    const updated = await prisma.video.update({ where: { id: video.id }, data: { views: { increment: 1 } } });
+    const cp = await prisma.creatorProfile.findUnique({ where: { user: updated.creator } }).catch(() => null);
+    if (cp) await prisma.creatorProfile.update({ where: { id: cp.id }, data: { views: { increment: 1 } } }).catch(() => {});
+    let data = await populateCreator(updated);
+    if (uid) {
+      data.liked = !!(await prisma.like.findUnique({ where: { user_targetType_targetId: { user: uid, targetType: 'Video', targetId: video.id } } }).catch(() => null));
+      data.saved = !!(await prisma.bookmark.findUnique({ where: { user_targetType_targetId: { user: uid, targetType: 'Video', targetId: video.id } } }).catch(() => null));
     }
-    const related = await Video.find({ subject: video.subject, _id: { $ne: video._id }, status: 'active' }).limit(6).populate('creator', 'name username avatar');
-    data.related = related;
+    const related = await prisma.video.findMany({ where: { subject: video.subject, id: { not: video.id }, status: 'active' }, take: 6 });
+    data.related = await populateCreator(related);
     res.json(data);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -45,19 +49,15 @@ const getVideo = async (req, res) => {
 const listVideos = async (req, res) => {
   try {
     const { page, limit, subject, creator, department, search } = req.query;
-    const filter = { status: 'active' };
-    if (subject) filter.subject = toString(subject, 200);
-    if (creator) filter.creator = toString(creator, 100);
-    if (department) filter.department = toString(department, 200);
-    if (search) filter.$text = { $search: toString(search, 100) };
+    const where = { status: 'active' };
+    if (subject) where.subject = toString(subject, 200);
+    if (creator) where.creator = toString(creator, 100);
+    if (department) where.department = toString(department, 200);
+    if (search) where.title = { contains: toString(search, 100), mode: 'insensitive' };
     const pageNum = toInt(page, { def: 1 });
     const limitNum = toInt(limit, { def: 20, max: 100 });
-    const videos = await Video.find(filter)
-      .sort({ createdAt: -1 })
-      .skip((pageNum - 1) * limitNum)
-      .limit(limitNum)
-      .populate('creator', 'name username avatar bio department isVerified role');
-    res.json(videos);
+    const videos = await prisma.video.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (pageNum - 1) * limitNum, take: limitNum });
+    res.json(await populateCreator(videos));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -65,19 +65,18 @@ const listVideos = async (req, res) => {
 
 const toggleLike = async (req, res) => {
   try {
-    const video = await Video.findById(req.params.id);
+    const uid = reqUserId(req);
+    const video = await prisma.video.findUnique({ where: { id: req.params.id } });
     if (!video) return res.status(404).json({ message: 'Video not found' });
-    const existing = await Like.findOne({ user: req.user._id, targetType: 'Video', targetId: video._id });
+    const existing = await prisma.like.findUnique({ where: { user_targetType_targetId: { user: uid, targetType: 'Video', targetId: video.id } } }).catch(() => null);
     if (existing) {
-      await existing.deleteOne();
-      video.likesCount = Math.max(0, video.likesCount - 1);
-      await video.save();
-      return res.json({ liked: false, likesCount: video.likesCount });
+      await prisma.$transaction([prisma.like.delete({ where: { id: existing.id } }), prisma.video.update({ where: { id: video.id }, data: { likesCount: { decrement: 1 } } })]);
+      const v = await prisma.video.findUnique({ where: { id: video.id } });
+      return res.json({ liked: false, likesCount: Math.max(0, v.likesCount) });
     }
-    await Like.create({ user: req.user._id, targetType: 'Video', targetId: video._id });
-    video.likesCount += 1;
-    await video.save();
-    res.json({ liked: true, likesCount: video.likesCount });
+    await prisma.$transaction([prisma.like.create({ data: { id: createId(), user: uid, targetType: 'Video', targetId: video.id } }), prisma.video.update({ where: { id: video.id }, data: { likesCount: { increment: 1 } } })]);
+    const v = await prisma.video.findUnique({ where: { id: video.id } });
+    res.json({ liked: true, likesCount: v.likesCount });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -85,18 +84,15 @@ const toggleLike = async (req, res) => {
 
 const toggleSave = async (req, res) => {
   try {
-    const video = await Video.findById(req.params.id);
+    const uid = reqUserId(req);
+    const video = await prisma.video.findUnique({ where: { id: req.params.id } });
     if (!video) return res.status(404).json({ message: 'Video not found' });
-    const existing = await Bookmark.findOne({ user: req.user._id, targetType: 'Video', targetId: video._id });
+    const existing = await prisma.bookmark.findUnique({ where: { user_targetType_targetId: { user: uid, targetType: 'Video', targetId: video.id } } }).catch(() => null);
     if (existing) {
-      await existing.deleteOne();
-      video.savesCount = Math.max(0, video.savesCount - 1);
-      await video.save();
+      await prisma.$transaction([prisma.bookmark.delete({ where: { id: existing.id } }), prisma.video.update({ where: { id: video.id }, data: { savesCount: { decrement: 1 } } })]);
       return res.json({ saved: false });
     }
-    await Bookmark.create({ user: req.user._id, targetType: 'Video', targetId: video._id });
-    video.savesCount += 1;
-    await video.save();
+    await prisma.$transaction([prisma.bookmark.create({ data: { id: createId(), user: uid, targetType: 'Video', targetId: video.id } }), prisma.video.update({ where: { id: video.id }, data: { savesCount: { increment: 1 } } })]);
     res.json({ saved: true });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -105,27 +101,26 @@ const toggleSave = async (req, res) => {
 
 const deleteVideo = async (req, res) => {
   try {
-    const video = await Video.findById(req.params.id);
+    const uid = reqUserId(req);
+    const video = await prisma.video.findUnique({ where: { id: req.params.id } });
     if (!video) return res.status(404).json({ message: 'Video not found' });
-    if (String(video.creator) !== String(req.user._id) && req.user.role !== 'SUPER_ADMIN' && req.user.role !== 'MODERATOR') {
-      return res.status(403).json({ message: 'Forbidden' });
-    }
-    video.status = 'removed';
-    await video.save();
+    if (String(video.creator) !== String(uid) && req.user.role !== 'SUPER_ADMIN' && req.user.role !== 'MODERATOR') return res.status(403).json({ message: 'Forbidden' });
+    await prisma.video.update({ where: { id: video.id }, data: { status: 'removed' } });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
 
-// Watch later / playlists
 const addWatchLater = async (req, res) => {
   try {
-    let pl = await Playlist.findOne({ owner: req.user._id, type: 'watch-later' });
-    if (!pl) pl = await Playlist.create({ owner: req.user._id, title: 'Watch Later', type: 'watch-later' });
-    if (!pl.items.includes(req.params.id)) pl.items.push(req.params.id);
-    await pl.save();
-    res.json({ added: true, count: pl.items.length });
+    const uid = reqUserId(req);
+    let pl = await prisma.playlist.findFirst({ where: { owner: uid, type: 'watch-later' } });
+    if (!pl) pl = await prisma.playlist.create({ data: { id: createId(), owner: uid, title: 'Watch Later', type: 'watch-later', items: [] } });
+    const items = Array.isArray(pl.items) ? pl.items : [];
+    if (!items.includes(req.params.id)) items.push(req.params.id);
+    pl = await prisma.playlist.update({ where: { id: pl.id }, data: { items } });
+    res.json({ added: true, count: items.length });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -133,12 +128,13 @@ const addWatchLater = async (req, res) => {
 
 const addHistory = async (req, res) => {
   try {
-    let pl = await Playlist.findOne({ owner: req.user._id, type: 'history' });
-    if (!pl) pl = await Playlist.create({ owner: req.user._id, title: 'History', type: 'history' });
-    pl.items = pl.items.filter((i) => String(i) !== String(req.params.id));
-    pl.items.unshift(req.params.id);
-    if (pl.items.length > 100) pl.items = pl.items.slice(0, 100);
-    await pl.save();
+    const uid = reqUserId(req);
+    let pl = await prisma.playlist.findFirst({ where: { owner: uid, type: 'history' } });
+    if (!pl) pl = await prisma.playlist.create({ data: { id: createId(), owner: uid, title: 'History', type: 'history', items: [] } });
+    let items = (Array.isArray(pl.items) ? pl.items : []).filter((i) => String(i) !== String(req.params.id));
+    items.unshift(req.params.id);
+    if (items.length > 100) items = items.slice(0, 100);
+    await prisma.playlist.update({ where: { id: pl.id }, data: { items } });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ message: err.message });

@@ -22,6 +22,12 @@ const errorHandler = (err, req, res, next) => {
   } else if (err.name === 'MongoServerError' && err.code === 11000) {
     statusCode = 409;
     err.message = 'Resource already exists';
+  } else if (err.code === 'P2002') {
+    statusCode = 409;
+    err.message = 'Resource already exists';
+  } else if (err.code === 'P2025') {
+    statusCode = 404;
+    err.message = 'Not Found';
   }
 
   const isProd = process.env.NODE_ENV === 'production';

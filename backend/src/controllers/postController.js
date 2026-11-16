@@ -1,31 +1,53 @@
-const { Post, Like, Comment, Bookmark, Notification, Activity, User } = require('../models');
+const { prisma, createId, toPublicUser, userId: reqUserId } = require('../utils/prisma');
 const { toString, toInt } = require('../utils/sanitize');
 
 const POST_TYPES = ['text', 'image', 'video', 'note', 'article', 'quiz', 'announcement'];
 const MEDIA_URL_RE = /^\/uploads\/|^https?:\/\//i;
 
+const populateAuthor = async (items) => {
+  const arr = Array.isArray(items) ? items : [items];
+  const ids = [...new Set(arr.map((p) => p.author).filter(Boolean))];
+  if (!ids.length) return items;
+  const users = await prisma.user.findMany({ where: { id: { in: ids } } });
+  const map = Object.fromEntries(users.map((u) => [u.id, { _id: u.id, name: u.name, username: u.username, avatar: u.avatar, bio: u.bio, department: u.department, isVerified: u.isVerified, role: u.role }]));
+  const apply = (p) => ({ ...p, _id: p.id, author: map[p.author] || p.author });
+  return Array.isArray(items) ? arr.map(apply) : apply(arr[0]);
+};
+
+const withFlags = async (post, userId) => {
+  const data = { ...post, _id: post.id };
+  if (userId) {
+    const [liked, saved] = await Promise.all([
+      prisma.like.findUnique({ where: { user_targetType_targetId: { user: userId, targetType: 'Post', targetId: post.id } } }).catch(() => null),
+      prisma.bookmark.findUnique({ where: { user_targetType_targetId: { user: userId, targetType: 'Post', targetId: post.id } } }).catch(() => null),
+    ]);
+    data.liked = !!liked;
+    data.saved = !!saved;
+  }
+  return data;
+};
+
 const createPost = async (req, res) => {
   try {
+    const uid = reqUserId(req);
     const { content, type = 'text', media = [], tags = [], subject, department } = req.body;
     const safeType = POST_TYPES.includes(type) ? type : 'text';
-    const safeMedia = Array.isArray(media)
-      ? media.map((m) => toString(m, 500)).filter((m) => MEDIA_URL_RE.test(m)).slice(0, 6)
-      : [];
-    const safeTags = Array.isArray(tags)
-      ? tags.map((t) => toString(t, 40)).filter(Boolean).slice(0, 12)
-      : [];
-    const post = await Post.create({
-      author: req.user._id,
-      content: toString(content, 5000),
-      type: safeType,
-      media: safeMedia,
-      tags: safeTags,
-      subject: toString(subject, 200),
-      department: toString(department, 200),
+    const safeMedia = Array.isArray(media) ? media.map((m) => toString(m, 500)).filter((m) => MEDIA_URL_RE.test(m)).slice(0, 6) : [];
+    const safeTags = Array.isArray(tags) ? tags.map((t) => toString(t, 40)).filter(Boolean).slice(0, 12) : [];
+    const post = await prisma.post.create({
+      data: {
+        id: createId(), author: uid, content: toString(content, 5000), type: safeType,
+        media: safeMedia, tags: safeTags, subject: toString(subject, 200), department: toString(department, 200),
+      },
     });
-    await Activity.create({ user: req.user._id, type: 'create_post', targetType: 'Post', targetId: post._id, metadata: { content, subject, tags } });
-    await User.updateOne({ _id: req.user._id }, { $inc: { 'gamification.xp': 10 } });
-    res.status(201).json(post);
+    await prisma.activity.create({ data: { id: createId(), user: uid, type: 'create_post', targetType: 'Post', targetId: post.id, metadata: { content, subject, tags } } }).catch(() => {});
+    const user = await prisma.user.findUnique({ where: { id: uid } });
+    if (user) {
+      const g = user.gamification || { xp: 0, level: 1, streaks: 0, badges: [] };
+      g.xp = (g.xp || 0) + 10;
+      await prisma.user.update({ where: { id: uid }, data: { gamification: g } }).catch(() => {});
+    }
+    res.status(201).json({ ...post, _id: post.id });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -33,15 +55,11 @@ const createPost = async (req, res) => {
 
 const getPost = async (req, res) => {
   try {
-    const post = await Post.findById(req.params.id).populate('author', 'name username avatar bio department isVerified role');
+    const post = await prisma.post.findUnique({ where: { id: req.params.id } });
     if (!post) return res.status(404).json({ message: 'Post not found' });
-    post.views += 1;
-    await post.save();
-    const data = post.toObject();
-    if (req.user) {
-      data.liked = !!(await Like.findOne({ user: req.user._id, targetType: 'Post', targetId: post._id }));
-      data.saved = !!(await Bookmark.findOne({ user: req.user._id, targetType: 'Post', targetId: post._id }));
-    }
+    const updated = await prisma.post.update({ where: { id: post.id }, data: { views: { increment: 1 } } });
+    let data = await populateAuthor(updated);
+    data = await withFlags(data, reqUserId(req));
     res.json(data);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -51,28 +69,20 @@ const getPost = async (req, res) => {
 const listPosts = async (req, res) => {
   try {
     const { page, limit, author, subject, type, authorId } = req.query;
-    const filter = { status: 'active' };
-    if (author) filter.author = toString(author, 100);
-    if (authorId) filter.author = toString(authorId, 100);
-    if (subject) filter.subject = toString(subject, 200);
-    if (type) filter.type = toString(type, 50);
+    const where = { status: 'active' };
+    if (author) where.author = toString(author, 100);
+    if (authorId) where.author = toString(authorId, 100);
+    if (subject) where.subject = toString(subject, 200);
+    if (type) where.type = toString(type, 50);
     const pageNum = toInt(page, { def: 1 });
     const limitNum = toInt(limit, { def: 20, max: 100 });
-    const posts = await Post.find(filter)
-      .sort({ createdAt: -1 })
-      .skip((pageNum - 1) * limitNum)
-      .limit(limitNum)
-      .populate('author', 'name username avatar bio department isVerified role');
-    const list = await Promise.all(
-      posts.map(async (p) => {
-        const data = p.toObject();
-        if (req.user) {
-          data.liked = !!(await Like.findOne({ user: req.user._id, targetType: 'Post', targetId: p._id }));
-          data.saved = !!(await Bookmark.findOne({ user: req.user._id, targetType: 'Post', targetId: p._id }));
-        }
-        return data;
-      })
-    );
+    const posts = await prisma.post.findMany({
+      where, orderBy: { createdAt: 'desc' },
+      skip: (pageNum - 1) * limitNum, take: limitNum,
+    });
+    const populated = await populateAuthor(posts);
+    const uid = reqUserId(req);
+    const list = await Promise.all(populated.map((p) => withFlags(p, uid)));
     res.json(list);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -81,13 +91,11 @@ const listPosts = async (req, res) => {
 
 const followingFeed = async (req, res) => {
   try {
-    const follows = await require('../models').Follow.find({ follower: req.user._id }).select('following');
+    const uid = reqUserId(req);
+    const follows = await prisma.follow.findMany({ where: { follower: uid } });
     const ids = follows.map((f) => f.following);
-    const posts = await Post.find({ author: { $in: ids }, status: 'active' })
-      .sort({ createdAt: -1 })
-      .limit(30)
-      .populate('author', 'name username avatar bio department isVerified role');
-    res.json(posts);
+    const posts = await prisma.post.findMany({ where: { author: { in: ids }, status: 'active' }, orderBy: { createdAt: 'desc' }, take: 30 });
+    res.json(await populateAuthor(posts));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -95,13 +103,13 @@ const followingFeed = async (req, res) => {
 
 const trendingFeed = async (req, res) => {
   try {
-    const days = 7;
-    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-    const posts = await Post.find({ status: 'active', createdAt: { $gte: since } })
-      .sort({ views: -1, likesCount: -1, sharesCount: -1, commentsCount: -1 })
-      .limit(30)
-      .populate('author', 'name username avatar bio department isVerified role');
-    res.json(posts);
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const posts = await prisma.post.findMany({
+      where: { status: 'active', createdAt: { gte: since } },
+      orderBy: [{ views: 'desc' }, { likesCount: 'desc' }, { sharesCount: 'desc' }, { commentsCount: 'desc' }],
+      take: 30,
+    });
+    res.json(await populateAuthor(posts));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -109,25 +117,17 @@ const trendingFeed = async (req, res) => {
 
 const updatePost = async (req, res) => {
   try {
-    const post = await Post.findById(req.params.id);
+    const uid = reqUserId(req);
+    const post = await prisma.post.findUnique({ where: { id: req.params.id } });
     if (!post) return res.status(404).json({ message: 'Post not found' });
-    if (String(post.author._id || post.author) !== String(req.user._id) && req.user.role !== 'SUPER_ADMIN') {
-      return res.status(403).json({ message: 'Forbidden' });
-    }
-    if (req.body.content !== undefined) post.content = toString(req.body.content, 5000);
-    if (req.body.subject !== undefined) post.subject = toString(req.body.subject, 200);
-    if (req.body.tags !== undefined) {
-      post.tags = Array.isArray(req.body.tags)
-        ? req.body.tags.map((t) => toString(t, 40)).filter(Boolean).slice(0, 12)
-        : [];
-    }
-    if (req.body.media !== undefined) {
-      post.media = Array.isArray(req.body.media)
-        ? req.body.media.map((m) => toString(m, 500)).filter((m) => MEDIA_URL_RE.test(m)).slice(0, 6)
-        : [];
-    }
-    await post.save();
-    res.json(post);
+    if (String(post.author) !== String(uid) && req.user.role !== 'SUPER_ADMIN') return res.status(403).json({ message: 'Forbidden' });
+    const data = {};
+    if (req.body.content !== undefined) data.content = toString(req.body.content, 5000);
+    if (req.body.subject !== undefined) data.subject = toString(req.body.subject, 200);
+    if (req.body.tags !== undefined) data.tags = Array.isArray(req.body.tags) ? req.body.tags.map((t) => toString(t, 40)).filter(Boolean).slice(0, 12) : [];
+    if (req.body.media !== undefined) data.media = Array.isArray(req.body.media) ? req.body.media.map((m) => toString(m, 500)).filter((m) => MEDIA_URL_RE.test(m)).slice(0, 6) : [];
+    const updated = await prisma.post.update({ where: { id: post.id }, data });
+    res.json({ ...updated, _id: updated.id });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -135,13 +135,11 @@ const updatePost = async (req, res) => {
 
 const deletePost = async (req, res) => {
   try {
-    const post = await Post.findById(req.params.id);
+    const uid = reqUserId(req);
+    const post = await prisma.post.findUnique({ where: { id: req.params.id } });
     if (!post) return res.status(404).json({ message: 'Post not found' });
-    if (String(post.author._id || post.author) !== String(req.user._id) && req.user.role !== 'SUPER_ADMIN' && req.user.role !== 'MODERATOR') {
-      return res.status(403).json({ message: 'Forbidden' });
-    }
-    post.status = 'removed';
-    await post.save();
+    if (String(post.author) !== String(uid) && req.user.role !== 'SUPER_ADMIN' && req.user.role !== 'MODERATOR') return res.status(403).json({ message: 'Forbidden' });
+    await prisma.post.update({ where: { id: post.id }, data: { status: 'removed' } });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -150,75 +148,68 @@ const deletePost = async (req, res) => {
 
 const toggleLike = async (req, res) => {
   try {
-    const post = await Post.findById(req.params.id);
+    const uid = reqUserId(req);
+    const post = await prisma.post.findUnique({ where: { id: req.params.id } });
     if (!post) return res.status(404).json({ message: 'Post not found' });
-    const existing = await Like.findOne({ user: req.user._id, targetType: 'Post', targetId: post._id });
+    const existing = await prisma.like.findUnique({ where: { user_targetType_targetId: { user: uid, targetType: 'Post', targetId: post.id } } }).catch(() => null);
     if (existing) {
-      await existing.deleteOne();
-      post.likesCount = Math.max(0, post.likesCount - 1);
-      await post.save();
-      return res.json({ liked: false, likesCount: post.likesCount });
+      await prisma.$transaction([
+        prisma.like.delete({ where: { id: existing.id } }),
+        prisma.post.update({ where: { id: post.id }, data: { likesCount: { decrement: 1 } } }),
+      ]);
+      const p = await prisma.post.findUnique({ where: { id: post.id } });
+      return res.json({ liked: false, likesCount: Math.max(0, p.likesCount) });
     }
-    await Like.create({ user: req.user._id, targetType: 'Post', targetId: post._id });
-    post.likesCount += 1;
-    await post.save();
-    if (String(post.author) !== String(req.user._id)) {
-      await Notification.create({
-        user: post.author,
-        type: 'post_like',
-        category: 'Social',
-        actor: req.user._id,
-        title: 'New like',
-        message: `${req.user.name} liked your post`,
-        link: `/feed`,
-        metadata: { post: post._id },
-      });
+    await prisma.$transaction([
+      prisma.like.create({ data: { id: createId(), user: uid, targetType: 'Post', targetId: post.id } }),
+      prisma.post.update({ where: { id: post.id }, data: { likesCount: { increment: 1 } } }),
+    ]);
+    if (String(post.author) !== String(uid)) {
+      await prisma.notification.create({ data: { id: createId(), user: post.author, type: 'post_like', category: 'Social', actor: uid, title: 'New like', message: `${req.user.name} liked your post`, link: `/feed`, metadata: { post: post.id } } }).catch(() => {});
     }
-    res.json({ liked: true, likesCount: post.likesCount });
+    const p = await prisma.post.findUnique({ where: { id: post.id } });
+    res.json({ liked: true, likesCount: p.likesCount });
   } catch (err) {
+    if (err.code === 'P2002') return res.json({ liked: true });
     res.status(500).json({ message: err.message });
   }
 };
 
 const toggleSave = async (req, res) => {
   try {
-    const post = await Post.findById(req.params.id);
+    const uid = reqUserId(req);
+    const post = await prisma.post.findUnique({ where: { id: req.params.id } });
     if (!post) return res.status(404).json({ message: 'Post not found' });
-    const existing = await Bookmark.findOne({ user: req.user._id, targetType: 'Post', targetId: post._id });
+    const existing = await prisma.bookmark.findUnique({ where: { user_targetType_targetId: { user: uid, targetType: 'Post', targetId: post.id } } }).catch(() => null);
     if (existing) {
-      await existing.deleteOne();
-      post.savesCount = Math.max(0, post.savesCount - 1);
-      await post.save();
+      await prisma.$transaction([
+        prisma.bookmark.delete({ where: { id: existing.id } }),
+        prisma.post.update({ where: { id: post.id }, data: { savesCount: { decrement: 1 } } }),
+      ]);
       return res.json({ saved: false });
     }
-    await Bookmark.create({ user: req.user._id, targetType: 'Post', targetId: post._id });
-    post.savesCount += 1;
-    await post.save();
+    await prisma.$transaction([
+      prisma.bookmark.create({ data: { id: createId(), user: uid, targetType: 'Post', targetId: post.id } }),
+      prisma.post.update({ where: { id: post.id }, data: { savesCount: { increment: 1 } } }),
+    ]);
     res.json({ saved: true });
   } catch (err) {
+    if (err.code === 'P2002') return res.json({ saved: true });
     res.status(500).json({ message: err.message });
   }
 };
 
 const sharePost = async (req, res) => {
   try {
-    const post = await Post.findById(req.params.id);
+    const uid = reqUserId(req);
+    const post = await prisma.post.findUnique({ where: { id: req.params.id } });
     if (!post) return res.status(404).json({ message: 'Post not found' });
-    post.sharesCount += 1;
-    await post.save();
-    await Activity.create({ user: req.user._id, type: 'share', targetType: 'Post', targetId: post._id });
-    if (String(post.author) !== String(req.user._id)) {
-      await Notification.create({
-        user: post.author,
-        type: 'share',
-        category: 'Social',
-        actor: req.user._id,
-        title: 'New share',
-        message: `${req.user.name} shared your post`,
-        link: '/feed',
-      });
+    const updated = await prisma.post.update({ where: { id: post.id }, data: { sharesCount: { increment: 1 } } });
+    await prisma.activity.create({ data: { id: createId(), user: uid, type: 'share', targetType: 'Post', targetId: post.id } }).catch(() => {});
+    if (String(post.author) !== String(uid)) {
+      await prisma.notification.create({ data: { id: createId(), user: post.author, type: 'share', category: 'Social', actor: uid, title: 'New share', message: `${req.user.name} shared your post`, link: '/feed' } }).catch(() => {});
     }
-    res.json({ shared: true, sharesCount: post.sharesCount });
+    res.json({ shared: true, sharesCount: updated.sharesCount });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

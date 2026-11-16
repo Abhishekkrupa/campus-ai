@@ -3,13 +3,38 @@ const cors = require('cors');
 const helmet = require('helmet');
 const path = require('path');
 const connectDB = require('./config/db');
+const prisma = require('./config/prisma');
 const config = require('./config');
 const { notFound, errorHandler } = require('./middleware/error');
 const { apiLimiter } = require('./middleware/rateLimiter');
 
 const app = express();
 
-connectDB();
+const initDatabases = async () => {
+  if (config.databaseURL) {
+    try {
+      await prisma.$connect();
+      console.log('Prisma/PostgreSQL connected');
+    } catch (err) {
+      console.error(`Prisma connection error: ${err.message}`);
+      if (process.env.NODE_ENV === 'production') throw err;
+    }
+  }
+  // Keep legacy Mongo connection optional during migration if configured.
+  if (config.mongoURI) {
+    try {
+      await connectDB();
+    } catch (err) {
+      console.error(`MongoDB startup connection error: ${err.message}`);
+      if (!config.databaseURL) throw err;
+    }
+  }
+};
+
+initDatabases().catch((err) => {
+  console.error('Database initialization failed:', err.message);
+  if (process.env.NODE_ENV === 'production') process.exit(1);
+});
 
 app.set('trust proxy', 1);
 app.use(helmet());

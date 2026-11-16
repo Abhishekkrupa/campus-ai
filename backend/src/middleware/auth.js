@@ -1,6 +1,6 @@
 const jwt = require('jsonwebtoken');
 const config = require('../config');
-const { User } = require('../models');
+const { prisma } = require('../utils/prisma');
 
 const protect = async (req, res, next) => {
   let token;
@@ -12,17 +12,25 @@ const protect = async (req, res, next) => {
   }
   try {
     const decoded = jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] });
-    const user = await User.findById(decoded.id);
+    if (typeof decoded.id !== 'string') {
+      return res.status(401).json({ message: 'Not authorized, token failed' });
+    }
+    const user = await prisma.user.findUnique({ where: { id: decoded.id } });
     if (!user) {
       return res.status(401).json({ message: 'Not authorized, user not found' });
     }
     if (user.status === 'suspended') {
       return res.status(403).json({ message: 'Account suspended' });
     }
-    req.user = user;
+    const { password, ...safeUser } = user;
+    req.user = { ...safeUser, _id: safeUser.id };
     next();
   } catch (err) {
-    return res.status(401).json({ message: 'Not authorized, token failed' });
+    if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError' || err.name === 'NotBeforeError') {
+      return res.status(401).json({ message: 'Not authorized, token failed' });
+    }
+    console.error('Auth middleware error:', err);
+    return res.status(500).json({ message: 'Authentication service unavailable' });
   }
 };
 

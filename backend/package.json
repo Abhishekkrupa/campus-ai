@@ -12,7 +12,10 @@
     "restart": "pm2 restart campus-ai-backend",
     "watch:cluster": "pm2 start ecosystem.config.js --watch",
     "logs": "pm2 logs campus-ai-backend",
-    "status": "pm2 status"
+    "status": "pm2 status",
+    "prisma:generate": "prisma generate",
+    "prisma:validate": "prisma validate",
+    "prisma:migrate:status": "prisma migrate status"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

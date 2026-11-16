@@ -1,22 +1,31 @@
-const { User, Follow, Connection, CreatorProfile, Notification, Activity } = require('../models');
+const bcrypt = require('bcryptjs');
+const { randomBytes } = require('crypto');
+const { prisma, toPublicUser, userId: reqUserId, createId } = require('../utils/prisma');
 const { roles } = require('../utils/constants');
 const { escapeRegExp, toString } = require('../utils/sanitize');
 
-const publicUser = (user) => {
-  const u = user.toObject ? user.toObject() : user;
-  delete u.password;
-  return u;
-};
-
 const normalizePhone = (phone) => String(phone || '').replace(/[\s\-().]/g, '');
+
+const publicUser = toPublicUser;
+
+const includeCreator = async (user) => {
+  if (!user) return user;
+  if (user.creatorId) {
+    const cp = await prisma.creatorProfile.findUnique({ where: { id: user.creatorId } });
+    return { ...user, creatorId: cp || null };
+  }
+  const cp = await prisma.creatorProfile.findUnique({ where: { user: user.id } }).catch(() => null);
+  if (cp) return { ...user, creatorId: cp };
+  return user;
+};
 
 const findByPhone = async (req, res) => {
   try {
     const phone = normalizePhone(req.params.phone);
     if (!phone) return res.status(400).json({ message: 'Phone number required' });
-    const user = await User.findOne({ phone }).select('name username avatar bio department isVerified role phone');
+    const user = await prisma.user.findFirst({ where: { phone }, select: { id: true, name: true, username: true, avatar: true, bio: true, department: true, isVerified: true, role: true, phone: true } });
     if (!user) return res.status(404).json({ message: 'No user found with this phone number' });
-    res.json(user);
+    res.json({ ...user, _id: user.id });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -25,16 +34,20 @@ const findByPhone = async (req, res) => {
 const getByUsername = async (req, res) => {
   try {
     const { username } = req.params;
-    const user = await User.findOne({ username: username.toLowerCase() }).populate({ path: 'creatorId', select: '-__v' });
+    let user = await prisma.user.findUnique({ where: { username: username.toLowerCase() } });
     if (!user) return res.status(404).json({ message: 'User not found' });
+    user = await includeCreator(user);
     const data = publicUser(user);
-    if (req.user) {
-      data.viewerFollows = !!(await Follow.findOne({ follower: req.user._id, following: user._id }));
-      const conn = await Connection.findOne({
-        $or: [
-          { requester: req.user._id, recipient: user._id },
-          { requester: user._id, recipient: req.user._id },
-        ],
+    const viewerId = reqUserId(req);
+    if (viewerId) {
+      data.viewerFollows = !!(await prisma.follow.findUnique({ where: { follower_following: { follower: viewerId, following: user.id } } }).catch(() => null));
+      const conn = await prisma.connection.findFirst({
+        where: {
+          OR: [
+            { requester: viewerId, recipient: user.id },
+            { requester: user.id, recipient: viewerId },
+          ],
+        },
       });
       data.connectionState = conn ? conn.status : 'none';
       data.isBlocked = false;
@@ -50,11 +63,12 @@ const getByUsername = async (req, res) => {
 
 const getProfile = async (req, res) => {
   try {
-    const user = await User.findById(req.params.id).populate({ path: 'creatorId', select: '-__v' });
+    let user = await prisma.user.findUnique({ where: { id: req.params.id } });
     if (!user) return res.status(404).json({ message: 'User not found' });
+    user = await includeCreator(user);
     const data = publicUser(user);
-    data.followers = await Follow.countDocuments({ following: user._id });
-    data.following = await Follow.countDocuments({ follower: user._id });
+    data.followers = await prisma.follow.count({ where: { following: user.id } });
+    data.following = await prisma.follow.count({ where: { follower: user.id } });
     res.json(data);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -63,18 +77,20 @@ const getProfile = async (req, res) => {
 
 const updateUser = async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
+    const user = await prisma.user.findUnique({ where: { id: req.params.id } });
     if (!user) return res.status(404).json({ message: 'User not found' });
-    if (String(user._id) !== String(req.user._id) && req.user.role !== roles.SUPER_ADMIN) {
+    const viewerId = reqUserId(req);
+    if (String(user.id) !== String(viewerId) && req.user.role !== roles.SUPER_ADMIN) {
       return res.status(403).json({ message: 'Forbidden' });
     }
-    const fields = ['name', 'avatar', 'coverImage', 'phone', 'bio', 'department', 'college', 'course', 'semester', 'skills', 'subjects', 'education', 'experience', 'projects', 'certifications', 'achievements', 'socialLinks'];
+    const fields = ['name', 'avatar', 'coverImage', 'phone', 'bio', 'department', 'college', 'course', 'semester', 'skills', 'subjects', 'education', 'experience', 'projects', 'certifications', 'achievements'];
+    const data = {};
     fields.forEach((f) => {
-      if (req.body[f] !== undefined) user[f] = req.body[f];
+      if (req.body[f] !== undefined) data[f] = req.body[f];
     });
-    if (req.body.phone !== undefined) user.phone = normalizePhone(req.body.phone);
-    await user.save();
-    res.json(publicUser(user));
+    if (req.body.phone !== undefined) data.phone = normalizePhone(req.body.phone);
+    const updated = await prisma.user.update({ where: { id: user.id }, data });
+    res.json(publicUser(updated));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -82,56 +98,75 @@ const updateUser = async (req, res) => {
 
 const follow = async (req, res) => {
   try {
-    const target = await User.findById(req.params.id);
+    const viewerId = reqUserId(req);
+    const target = await prisma.user.findUnique({ where: { id: req.params.id } });
     if (!target) return res.status(404).json({ message: 'User not found' });
-    if (String(target._id) === String(req.user._id)) return res.status(400).json({ message: 'Cannot follow yourself' });
+    if (String(target.id) === String(viewerId)) return res.status(400).json({ message: 'Cannot follow yourself' });
 
-    let follow = await Follow.findOne({ follower: req.user._id, following: target._id });
-    if (follow) return res.json({ following: true });
+    const existing = await prisma.follow.findUnique({ where: { follower_following: { follower: viewerId, following: target.id } } }).catch(() => null);
+    if (existing) return res.json({ following: true });
 
-    follow = await Follow.create({ follower: req.user._id, following: target._id });
-    target.followersCount += 1;
-    req.user.followingCount += 1;
-    await target.save();
-    await req.user.save();
+    await prisma.$transaction([
+      prisma.follow.create({ data: { id: createId(), follower: viewerId, following: target.id } }),
+      prisma.user.update({ where: { id: target.id }, data: { followersCount: { increment: 1 } } }),
+      prisma.user.update({ where: { id: viewerId }, data: { followingCount: { increment: 1 } } }),
+    ]);
 
-    if (String(target._id) !== String(req.user._id)) {
-      await Notification.create({
-        user: target._id,
+    await prisma.notification.create({
+      data: {
+        id: createId(),
+        user: target.id,
         type: 'follower',
         category: 'Social',
-        actor: req.user._id,
+        actor: viewerId,
         title: 'New follower',
         message: `${req.user.name} started following you`,
         link: `/profile/${req.user.username}`,
-      });
-    }
-    await Activity.create({ user: req.user._id, type: 'follow', targetType: 'User', targetId: target._id });
+      },
+    }).catch(() => {});
+    await prisma.activity.create({ data: { id: createId(), user: viewerId, type: 'follow', targetType: 'User', targetId: target.id } }).catch(() => {});
     res.json({ following: true });
   } catch (err) {
+    if (err.code === 'P2002') return res.json({ following: true });
     res.status(500).json({ message: err.message });
   }
 };
 
 const unfollow = async (req, res) => {
   try {
-    const target = await User.findById(req.params.id);
+    const viewerId = reqUserId(req);
+    const target = await prisma.user.findUnique({ where: { id: req.params.id } });
     if (!target) return res.status(404).json({ message: 'User not found' });
-    await Follow.deleteOne({ follower: req.user._id, following: target._id });
-    target.followersCount = Math.max(0, target.followersCount - 1);
-    req.user.followingCount = Math.max(0, req.user.followingCount - 1);
-    await target.save();
-    await req.user.save();
+    const existing = await prisma.follow.findUnique({ where: { follower_following: { follower: viewerId, following: target.id } } }).catch(() => null);
+    if (existing) {
+      await prisma.$transaction([
+        prisma.follow.delete({ where: { follower_following: { follower: viewerId, following: target.id } } }),
+        prisma.user.update({ where: { id: target.id }, data: { followersCount: { decrement: 1 } } }),
+        prisma.user.update({ where: { id: viewerId }, data: { followingCount: { decrement: 1 } } }),
+      ]).catch(() => {});
+    }
+    // clamp
+    await prisma.user.update({ where: { id: target.id }, data: { followersCount: Math.max(0, (await prisma.user.findUnique({ where: { id: target.id } }))?.followersCount || 0) } }).catch(() => {});
     res.json({ following: false });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
 
+const mapUsers = async (ids, selectExtra = {}) => {
+  const users = await prisma.user.findMany({ where: { id: { in: ids } } });
+  const byId = Object.fromEntries(users.map((u) => [u.id, publicUser(u)]));
+  return ids.map((id) => byId[id]).filter(Boolean);
+};
+
 const followers = async (req, res) => {
   try {
-    const followers = await Follow.find({ following: req.params.id }).populate('follower', 'name username avatar bio department subjects isVerified role');
-    res.json(followers.map((f) => publicUser(f.follower)));
+    const rows = await prisma.follow.findMany({ where: { following: req.params.id } });
+    const users = await prisma.user.findMany({ where: { id: { in: rows.map((r) => r.follower) } } });
+    res.json(users.map((u) => {
+      const p = publicUser(u);
+      return { _id: p._id, name: p.name, username: p.username, avatar: p.avatar, bio: p.bio, department: p.department, subjects: p.subjects, isVerified: p.isVerified, role: p.role };
+    }));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -139,86 +174,80 @@ const followers = async (req, res) => {
 
 const following = async (req, res) => {
   try {
-    const following = await Follow.find({ follower: req.params.id }).populate('following', 'name username avatar bio department subjects isVerified role');
-    res.json(following.map((f) => publicUser(f.following)));
+    const rows = await prisma.follow.findMany({ where: { follower: req.params.id } });
+    const users = await prisma.user.findMany({ where: { id: { in: rows.map((r) => r.following) } } });
+    res.json(users.map((u) => {
+      const p = publicUser(u);
+      return { _id: p._id, name: p.name, username: p.username, avatar: p.avatar, bio: p.bio, department: p.department, subjects: p.subjects, isVerified: p.isVerified, role: p.role };
+    }));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
 
-const checkProfile = async (userId) => {
-  return await Follow.findOne({ follower: userId });
-};
+const checkProfile = async (userId) => prisma.follow.findFirst({ where: { follower: userId } });
 
 const searchUsers = async (req, res) => {
   try {
     const q = toString(req.query.q, 100);
-    const filter = q
-      ? { $or: [{ name: { $regex: escapeRegExp(q), $options: 'i' } }, { username: { $regex: escapeRegExp(q), $options: 'i' } }, { department: { $regex: escapeRegExp(q), $options: 'i' } }] }
-      : {};
-    const users = await User.find(filter).limit(20).select('name username avatar bio department college subjects role isVerified');
-    res.json(users.map(publicUser));
+    const where = q ? {
+      OR: [
+        { name: { contains: q, mode: 'insensitive' } },
+        { username: { contains: q, mode: 'insensitive' } },
+        { department: { contains: q, mode: 'insensitive' } },
+      ],
+    } : {};
+    const users = await prisma.user.findMany({ where, take: 20 });
+    res.json(users.map((u) => {
+      const p = publicUser(u);
+      return { _id: p._id, name: p.name, username: p.username, avatar: p.avatar, bio: p.bio, department: p.department, college: p.college, subjects: p.subjects, role: p.role, isVerified: p.isVerified };
+    }));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
 
-// ---- Connections ----
-
 const sendConnection = async (req, res) => {
   try {
-    const recipient = await User.findById(req.params.id);
+    const viewerId = reqUserId(req);
+    const recipient = await prisma.user.findUnique({ where: { id: req.params.id } });
     if (!recipient) return res.status(404).json({ message: 'User not found' });
-    if (String(recipient._id) === String(req.user._id)) return res.status(400).json({ message: 'Cannot connect with yourself' });
-    let conn = await Connection.findOne({ requester: req.user._id, recipient: recipient._id });
-    if (!conn) {
-      conn = await Connection.findOne({ requester: recipient._id, recipient: req.user._id });
-    }
+    if (String(recipient.id) === String(viewerId)) return res.status(400).json({ message: 'Cannot connect with yourself' });
+    let conn = await prisma.connection.findFirst({ where: { requester: viewerId, recipient: recipient.id } });
+    if (!conn) conn = await prisma.connection.findFirst({ where: { requester: recipient.id, recipient: viewerId } });
     if (conn) {
       if (conn.status === 'pending') return res.json({ status: 'pending' });
       if (conn.status === 'accepted') return res.json({ status: 'accepted' });
     }
-    conn = await Connection.create({ requester: req.user._id, recipient: recipient._id, status: 'pending' });
-    recipient.connectionsCount = 0;
-    await Notification.create({
-      user: recipient._id,
-      type: 'connection_request',
-      category: 'Social',
-      actor: req.user._id,
-      title: 'Connection request',
-      message: `${req.user.name} sent you a connection request`,
-      link: `/profile/${req.user.username}`,
-    });
+    await prisma.connection.create({ data: { id: createId(), requester: viewerId, recipient: recipient.id, status: 'pending' } });
+    await prisma.notification.create({
+      data: { id: createId(), user: recipient.id, type: 'connection_request', category: 'Social', actor: viewerId, title: 'Connection request', message: `${req.user.name} sent you a connection request`, link: `/profile/${req.user.username}` },
+    }).catch(() => {});
     res.json({ status: 'pending' });
   } catch (err) {
+    if (err.code === 'P2002') return res.json({ status: 'pending' });
     res.status(500).json({ message: err.message });
   }
 };
 
 const respondConnection = async (req, res) => {
   try {
-    const conn = await Connection.findOne({ requester: req.params.id, recipient: req.user._id, status: 'pending' });
+    const viewerId = reqUserId(req);
+    const conn = await prisma.connection.findFirst({ where: { requester: req.params.id, recipient: viewerId, status: 'pending' } });
     if (!conn) return res.status(404).json({ message: 'Request not found' });
     const { action } = req.body;
     if (action === 'accept') {
-      conn.status = 'accepted';
-      await conn.save();
-      await User.updateOne({ _id: req.user._id }, { $inc: { connectionsCount: 1 } });
-      await User.updateOne({ _id: conn.requester }, { $inc: { connectionsCount: 1 } });
-      const requester = await User.findById(conn.requester);
-      await Notification.create({
-        user: conn.requester,
-        type: 'connection_accepted',
-        category: 'Social',
-        actor: req.user._id,
-        title: 'Connection accepted',
-        message: `${req.user.name} accepted your connection request`,
-        link: `/profile/${req.user.username}`,
-      });
+      await prisma.$transaction([
+        prisma.connection.update({ where: { id: conn.id }, data: { status: 'accepted' } }),
+        prisma.user.update({ where: { id: viewerId }, data: { connectionsCount: { increment: 1 } } }),
+        prisma.user.update({ where: { id: conn.requester }, data: { connectionsCount: { increment: 1 } } }),
+      ]);
+      await prisma.notification.create({
+        data: { id: createId(), user: conn.requester, type: 'connection_accepted', category: 'Social', actor: viewerId, title: 'Connection accepted', message: `${req.user.name} accepted your connection request`, link: `/profile/${req.user.username}` },
+      }).catch(() => {});
       res.json({ status: 'accepted' });
     } else {
-      conn.status = 'rejected';
-      await conn.save();
+      await prisma.connection.update({ where: { id: conn.id }, data: { status: 'rejected' } });
       res.json({ status: 'rejected' });
     }
   } catch (err) {
@@ -228,14 +257,17 @@ const respondConnection = async (req, res) => {
 
 const removeConnection = async (req, res) => {
   try {
-    await Connection.deleteMany({
-      $or: [
-        { requester: req.user._id, recipient: req.params.id, status: 'accepted' },
-        { requester: req.params.id, recipient: req.user._id, status: 'accepted' },
-      ],
+    const viewerId = reqUserId(req);
+    await prisma.connection.deleteMany({
+      where: {
+        OR: [
+          { requester: viewerId, recipient: req.params.id, status: 'accepted' },
+          { requester: req.params.id, recipient: viewerId, status: 'accepted' },
+        ],
+      },
     });
-    await User.updateOne({ _id: req.user._id }, { $inc: { connectionsCount: -1 } });
-    await User.updateOne({ _id: req.params.id }, { $inc: { connectionsCount: -1 } });
+    await prisma.user.update({ where: { id: viewerId }, data: { connectionsCount: { decrement: 1 } } }).catch(() => {});
+    await prisma.user.update({ where: { id: req.params.id }, data: { connectionsCount: { decrement: 1 } } }).catch(() => {});
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -245,37 +277,29 @@ const removeConnection = async (req, res) => {
 const getConnections = async (req, res) => {
   try {
     const [a, b] = await Promise.all([
-      Connection.find({ requester: req.params.id, status: 'accepted' }).populate('recipient', 'name username avatar bio department subjects isVerified role'),
-      Connection.find({ recipient: req.params.id, status: 'accepted' }).populate('requester', 'name username avatar bio department subjects isVerified role'),
+      prisma.connection.findMany({ where: { requester: req.params.id, status: 'accepted' } }),
+      prisma.connection.findMany({ where: { recipient: req.params.id, status: 'accepted' } }),
     ]);
-    const ids = new Set();
-    const result = [];
-    [...a, ...b].forEach((c) => {
-      const u = c.recipient || c.requester;
-      if (u && !ids.has(String(u._id))) {
-        ids.add(String(u._id));
-        result.push(publicUser(u));
-      }
-    });
-    res.json(result);
+    const ids = [...new Set([...a.map((c) => c.recipient), ...b.map((c) => c.requester)])];
+    const users = await prisma.user.findMany({ where: { id: { in: ids } } });
+    res.json(users.map((u) => {
+      const p = publicUser(u);
+      return { _id: p._id, name: p.name, username: p.username, avatar: p.avatar, bio: p.bio, department: p.department, subjects: p.subjects, isVerified: p.isVerified, role: p.role };
+    }));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
 
-// ---- Creator switch / upgrade ----
-
 const switchToCreator = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id);
-    user.accountType = 'CREATOR';
-    user.role = roles.CREATOR;
-    await user.save();
-    let cp = await CreatorProfile.findOne({ user: user._id });
+    const viewerId = reqUserId(req);
+    let user = await prisma.user.update({ where: { id: viewerId }, data: { accountType: 'CREATOR', role: roles.CREATOR } });
+    let cp = await prisma.creatorProfile.findUnique({ where: { user: user.id } }).catch(() => null);
     if (!cp) {
-      cp = await CreatorProfile.create({ user: user._id, category: req.body.category || '', bio: req.body.bio || user.bio || '', expertise: req.body.expertise || [], subjects: req.body.subjects || user.subjects || [] });
+      cp = await prisma.creatorProfile.create({ data: { id: createId(), user: user.id, category: req.body.category || '', bio: req.body.bio || user.bio || '', expertise: req.body.expertise || [], subjects: req.body.subjects || user.subjects || [] } });
     }
-    await User.updateOne({ _id: user._id }, { creatorId: cp._id });
+    user = await prisma.user.update({ where: { id: user.id }, data: { creatorId: cp.id } });
     res.json(publicUser(user));
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -284,16 +308,16 @@ const switchToCreator = async (req, res) => {
 
 const updateCreatorProfile = async (req, res) => {
   try {
-    let cp = await CreatorProfile.findOne({ user: req.user._id });
-    if (!cp) cp = await CreatorProfile.create({ user: req.user._id });
+    const viewerId = reqUserId(req);
+    let cp = await prisma.creatorProfile.findUnique({ where: { user: viewerId } }).catch(() => null);
+    if (!cp) cp = await prisma.creatorProfile.create({ data: { id: createId(), user: viewerId } });
     const fields = ['category', 'expertise', 'subjects', 'bio', 'tagline', 'socialLinks'];
-    fields.forEach((f) => {
-      if (req.body[f] !== undefined) cp[f] = req.body[f];
-    });
-    await cp.save();
-    if (req.body.subjects) await User.updateOne({ _id: req.user._id }, { $set: { subjects: req.body.subjects } });
-    await Activity.create({ user: req.user._id, type: 'profile_update', targetType: 'CreatorProfile', targetId: cp._id });
-    res.json(cp);
+    const data = {};
+    fields.forEach((f) => { if (req.body[f] !== undefined) data[f] = req.body[f]; });
+    cp = await prisma.creatorProfile.update({ where: { id: cp.id }, data });
+    if (req.body.subjects) await prisma.user.update({ where: { id: viewerId }, data: { subjects: req.body.subjects } }).catch(() => {});
+    await prisma.activity.create({ data: { id: createId(), user: viewerId, type: 'profile_update', targetType: 'CreatorProfile', targetId: cp.id } }).catch(() => {});
+    res.json({ ...cp, _id: cp.id });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -301,11 +325,11 @@ const updateCreatorProfile = async (req, res) => {
 
 const requestVerification = async (req, res) => {
   try {
-    let cp = await CreatorProfile.findOne({ user: req.user._id });
+    const viewerId = reqUserId(req);
+    let cp = await prisma.creatorProfile.findUnique({ where: { user: viewerId } }).catch(() => null);
     if (!cp) return res.status(403).json({ message: 'Create a creator profile first' });
-    cp.verificationRequest = { requested: true, reason: req.body.reason || '' };
-    await cp.save();
-    await User.updateOne({ _id: req.user._id }, { verificationStatus: 'pending' });
+    cp = await prisma.creatorProfile.update({ where: { id: cp.id }, data: { verificationRequest: { requested: true, reason: req.body.reason || '' } } });
+    await prisma.user.update({ where: { id: viewerId }, data: { verificationStatus: 'pending' } });
     res.json({ requested: true });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -314,10 +338,13 @@ const requestVerification = async (req, res) => {
 
 const creatorPublic = async (req, res) => {
   try {
-    const user = await User.findOne({ username: req.params.username.toLowerCase() }).populate({ path: 'creatorId', select: '-__v' });
-    if (!user || !user.creatorId) return res.status(404).json({ message: 'Creator not found' });
+    let user = await prisma.user.findUnique({ where: { username: req.params.username.toLowerCase() } });
+    if (!user) return res.status(404).json({ message: 'Creator not found' });
+    user = await includeCreator(user);
+    if (!user.creatorId) return res.status(404).json({ message: 'Creator not found' });
     const data = publicUser(user);
-    if (req.user) data.viewerFollows = !!(await Follow.findOne({ follower: req.user._id, following: user._id }));
+    const viewerId = reqUserId(req);
+    if (viewerId) data.viewerFollows = !!(await prisma.follow.findUnique({ where: { follower_following: { follower: viewerId, following: user.id } } }).catch(() => null));
     res.json(data);
   } catch (err) {
     res.status(500).json({ message: err.message });
