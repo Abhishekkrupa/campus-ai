@@ -1,5 +1,18 @@
 require('dotenv').config();
 
+const normalizeEnvUrl = (value) => {
+  if (typeof value !== 'string') return '';
+  let v = value.trim();
+  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+    v = v.slice(1, -1).trim();
+  }
+  return v;
+};
+
+// Normalize common deployment formatting issues (surrounding quotes/whitespace)
+if (process.env.DATABASE_URL) process.env.DATABASE_URL = normalizeEnvUrl(process.env.DATABASE_URL);
+if (process.env.MONGODB_URI) process.env.MONGODB_URI = normalizeEnvUrl(process.env.MONGODB_URI);
+
 if (process.env.NODE_ENV === 'production') {
   if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
     throw new Error('JWT_SECRET must be set to a strong value (at least 32 characters) in production');
