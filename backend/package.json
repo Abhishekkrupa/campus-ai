@@ -1,0 +1,35 @@
+{
+  "name": "campus-ai-backend",
+  "version": "1.0.0",
+  "description": "CampusAI backend API - social learning and professional networking platform",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "seed": "node src/seed.js",
+    "start:cluster": "pm2 start ecosystem.config.js",
+    "stop": "pm2 stop campus-ai-backend",
+    "restart": "pm2 restart campus-ai-backend",
+    "watch:cluster": "pm2 start ecosystem.config.js --watch",
+    "logs": "pm2 logs campus-ai-backend",
+    "status": "pm2 status"
+  },
+  "dependencies": {
+    "adm-zip": "^0.6.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.4.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mammoth": "^1.12.2",
+    "mongoose": "^8.6.0",
+    "multer": "^1.4.5-lts.1",
+    "pdf-parse": "^2.4.5",
+    "tesseract.js": "^7.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}

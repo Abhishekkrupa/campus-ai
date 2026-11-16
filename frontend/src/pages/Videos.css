@@ -1,0 +1,105 @@
+.videos-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.videos-upload {
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.videos-upload h3 {
+  margin: 0 0 16px;
+}
+
+.player-card {
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.video-frame {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  display: block;
+  background: #000;
+  border: none;
+}
+
+.video-frame-ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 48px;
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+.video-info {
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.video-info h1 {
+  font-size: 22px;
+  margin: 10px 0 6px;
+}
+
+.video-info-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.video-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.video-actions .btn.saved {
+  border-color: var(--primary);
+  color: var(--primary-dark);
+  background: var(--primary-soft);
+}
+
+.video-desc {
+  color: var(--text-2);
+  margin: 14px 0 0;
+  white-space: pre-wrap;
+}
+
+.video-creator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.video-creator-name {
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.video-creator-name:hover {
+  color: var(--primary);
+}
+
+.video-comments {
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.video-comments h3,
+.video-related h3 {
+  margin: 0 0 16px;
+  font-size: 17px;
+}

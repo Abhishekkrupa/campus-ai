@@ -1,0 +1,85 @@
+.search-section {
+  margin-bottom: 28px;
+}
+
+.search-section h3 {
+  margin: 0 0 14px;
+  font-size: 18px;
+}
+
+.search-list,
+.search-person {
+  display: flex;
+}
+
+.search-list {
+  flex-direction: column;
+  padding: 4px 0;
+}
+
+.search-person {
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.search-person:last-child {
+  border-bottom: none;
+}
+
+.search-person:hover {
+  background: var(--surface-2);
+}
+
+.search-name {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.search-post {
+  display: block;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.search-post:last-child {
+  border-bottom: none;
+}
+
+.search-post:hover {
+  background: var(--surface-2);
+}
+
+.search-post-content {
+  font-size: 14px;
+  margin: 2px 0;
+}
+
+.dept-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.dept-chip,
+.subject-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.dept-chip:hover,
+.subject-chip:hover {
+  border-color: var(--primary);
+  color: var(--primary-dark);
+  background: var(--primary-soft);
+}

@@ -1,0 +1,303 @@
+.feed-layout {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+.feed-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.feed-side {
+  width: 320px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 1000px) {
+  .feed-side {
+    display: none;
+  }
+}
+
+.compose {
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.compose-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.compose-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.compose-tab {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.compose-tab.active {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary-dark);
+}
+
+.compose-tags {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  align-items: center;
+}
+
+.compose-media {
+  margin: 10px 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.media-preview {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+}
+
+.media-preview .post-img {
+  max-height: 340px;
+  width: 100%;
+  object-fit: contain;
+}
+
+.media-preview .btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  border: none;
+}
+
+.compose-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.feed-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  overflow-x: auto;
+}
+
+/* Post card */
+.post-card {
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.post-head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.post-meta {
+  flex: 1;
+}
+
+.post-author {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+}
+
+.post-author a:hover {
+  color: var(--primary);
+}
+
+.post-sub {
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.post-body {
+  font-size: 15px;
+  overflow-wrap: break-word;
+  margin-bottom: 12px;
+}
+
+.post-media {
+  margin: 12px 0;
+}
+
+.post-img {
+  max-width: 100%;
+  max-height: 420px;
+  border-radius: 10px;
+  display: block;
+}
+
+.post-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.post-stats {
+  font-size: 13px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.post-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.act {
+  flex: 1;
+  min-width: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.act:hover {
+  background: var(--surface-2);
+}
+
+.act.liked {
+  color: var(--danger);
+}
+
+.act.saved {
+  color: var(--primary);
+}
+
+/* Comments */
+.comment-section {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+
+.comment-form {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.comment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.comment {
+  display: flex;
+  gap: 10px;
+}
+
+.comment-body {
+  flex: 1;
+  background: var(--surface-2);
+  padding: 10px 12px;
+  border-radius: 10px;
+}
+
+.comment-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.comment-name {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.comment-head .muted {
+  font-size: 12px;
+}
+
+.comment-text {
+  font-size: 14px;
+}
+
+.comment-replies {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Side cards */
+.side-card {
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.side-card h3 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+
+.who-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+}
+
+.who-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.who-name {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.who-name:hover {
+  color: var(--primary);
+}
+
+.who-sub {
+  font-size: 12px;
+  color: var(--text-3);
+}

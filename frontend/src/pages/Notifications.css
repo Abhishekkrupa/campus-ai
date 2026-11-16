@@ -1,0 +1,82 @@
+.notif-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.notif-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.notif-link,
+.notif-item {
+  display: block;
+}
+
+.notif-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  position: relative;
+}
+
+.notif-item:last-child {
+  border-bottom: none;
+}
+
+.notif-item:hover {
+  background: var(--surface-2);
+}
+
+.notif-item.unread {
+  background: var(--primary-soft);
+}
+
+.notif-item.unread:hover {
+  background: #e5dcff;
+}
+
+.notif-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.notif-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.notif-title a {
+  color: var(--primary);
+}
+
+.notif-title a:hover {
+  text-decoration: underline;
+}
+
+.notif-text {
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+
+.notif-time {
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.notif-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary);
+  flex-shrink: 0;
+  margin-top: 6px;
+  margin-left: 4px;
+}
