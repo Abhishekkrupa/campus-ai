@@ -3,6 +3,7 @@ import { useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import PrivateAdminAccess from './pages/PrivateAdminAccess';
 import Feed from './pages/Feed';
 import Explore from './pages/Explore';
 import Notes from './pages/Notes';
@@ -19,6 +20,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import InstituteDashboard from './pages/InstituteDashboard';
 import Search from './pages/Search';
 import { homePath } from './utils/roles';
+import { usePrivateMode } from './context/PrivateModeContext';
 
 function Protected({ children }) {
   const { token } = useAuth();
@@ -33,6 +35,12 @@ function RequireRole({ roles, children }) {
   return children;
 }
 
+function RegisterRoute() {
+  const { privateMode, loading } = usePrivateMode();
+  if (loading) return null;
+  return privateMode ? <PrivateAdminAccess /> : <Register />;
+}
+
 export default function App() {
   const { user } = useAuth();
   return (
@@ -43,7 +51,7 @@ export default function App() {
       />
       <Route
         path="/register"
-        element={user ? <Navigate to={homePath(user)} replace /> : <Register />}
+        element={user ? <Navigate to={homePath(user)} replace /> : <RegisterRoute />}
       />
       <Route
         element={

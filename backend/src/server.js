@@ -7,8 +7,10 @@ const prisma = require('./config/prisma');
 const config = require('./config');
 const { notFound, errorHandler } = require('./middleware/error');
 const { apiLimiter } = require('./middleware/rateLimiter');
+const privateModeGuard = require('./middleware/privateMode');
 
 const app = express();
+const isTestEnv = process.env.NODE_ENV === 'test';
 
 const initDatabases = async () => {
   if (config.databaseURL) {
@@ -31,10 +33,12 @@ const initDatabases = async () => {
   }
 };
 
-initDatabases().catch((err) => {
-  console.error('Database initialization failed:', err.message);
-  if (process.env.NODE_ENV === 'production') process.exit(1);
-});
+if (!isTestEnv) {
+  initDatabases().catch((err) => {
+    console.error('Database initialization failed:', err.message);
+    if (process.env.NODE_ENV === 'production') process.exit(1);
+  });
+}
 
 app.set('trust proxy', 1);
 app.use(helmet());
@@ -59,6 +63,9 @@ app.use(
   })
 );
 
+// One gate for every API request (private mode is opt-in via ADMIN_ONLY_MODE)
+app.use(privateModeGuard);
+
 // Routes
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/users', require('./routes/userRoutes'));
@@ -79,29 +86,36 @@ app.use('/api/upload', require('./routes/uploadRoutes'));
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
+// Public, read-only mode flag. This only drives UI copy; it is never used as
+// proof of identity or to authorize any request.
+app.get('/api/config', (req, res) => res.json({ privateMode: config.adminOnlyMode }));
+
 app.use(notFound);
 app.use(errorHandler);
 
-const server = app.listen(config.port, () => {
-  console.log(`CampusAI backend running on port ${config.port}`);
-  const provider = config.llm && config.llm.provider;
-  if (!provider || provider === 'ollama') {
-    const model = (config.llm && config.llm.ollamaModel) || 'llama3.2';
-    const url = (config.llm && config.llm.ollamaUrl) || 'http://localhost:11434/v1';
-    fetch(`${String(url).replace(/\/+$/, '')}/models`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        const list = (data && (data.models || data.data)) || [];
-        console.log(list.length
-          ? `AI assistant uses free local Ollama model "${model}" (${list.length} models available)`
-          : `Ollama is running but no models are pulled. Run: ollama pull ${model}`);
-      })
-      .catch(() => {
-        console.warn(`Ollama is not reachable at ${url} - AI chat will fall back to built-in local responses until it's running.`);
-      });
-  } else if (!config.llm.openaiApiKey) {
-    console.warn('OPENAI_API_KEY not set - AI chat will use the built-in local responses.');
-  }
-});
+let server = null;
+if (!isTestEnv) {
+  server = app.listen(config.port, () => {
+    console.log(`CampusAI backend running on port ${config.port}`);
+    const provider = config.llm && config.llm.provider;
+    if (!provider || provider === 'ollama') {
+      const model = (config.llm && config.llm.ollamaModel) || 'llama3.2';
+      const url = (config.llm && config.llm.ollamaUrl) || 'http://localhost:11434/v1';
+      fetch(`${String(url).replace(/\/+$/, '')}/models`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          const list = (data && (data.models || data.data)) || [];
+          console.log(list.length
+            ? `AI assistant uses free local Ollama model "${model}" (${list.length} models available)`
+            : `Ollama is running but no models are pulled. Run: ollama pull ${model}`);
+        })
+        .catch(() => {
+          console.warn(`Ollama is not reachable at ${url} - AI chat will fall back to built-in local responses until it's running.`);
+        });
+    } else if (!config.llm.openaiApiKey) {
+      console.warn('OPENAI_API_KEY not set - AI chat will use the built-in local responses.');
+    }
+  });
+}
 
 module.exports = { app, server };

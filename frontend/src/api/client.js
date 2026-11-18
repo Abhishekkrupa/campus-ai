@@ -22,6 +22,19 @@ api.interceptors.response.use(
         window.location.href = '/login';
       }
     }
+    // A session issued before private mode was enabled is rejected centrally.
+    if (
+      err.response &&
+      err.response.status === 403 &&
+      err.response.data &&
+      err.response.data.code === 'PRIVATE_MODE_ADMIN_REQUIRED'
+    ) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
+    }
     return Promise.reject(err);
   }
 );

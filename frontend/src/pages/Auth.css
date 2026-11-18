@@ -81,6 +81,28 @@
   font-weight: 600;
 }
 
+.auth-private-notice {
+  margin-top: 20px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface-2, #f4f6fb);
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.auth-private-notice strong {
+  display: block;
+  color: var(--text-1, inherit);
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.auth-private-notice p {
+  margin: 0;
+}
+
 .auth-hint {
   margin-top: 24px;
   padding-top: 16px;

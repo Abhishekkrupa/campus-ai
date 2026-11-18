@@ -15,6 +15,10 @@ services:
         sync: false
       - key: JWT_EXPIRES_IN
         value: 30d
+      # Temporary private deployment. Set to "true" to restrict every API
+      # request to verified super admins; change to "false" to restore public access.
+      - key: ADMIN_ONLY_MODE
+        value: "true"
       - key: FRONTEND_URL
         sync: false
       # Optional legacy MongoDB during migration; leave unset if not used

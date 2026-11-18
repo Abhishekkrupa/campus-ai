@@ -1,5 +1,7 @@
 require('dotenv').config();
 
+const { isAdminOnlyMode } = require('../utils/privateMode');
+
 const normalizeEnvUrl = (value) => {
   if (typeof value !== 'string') return '';
   let v = value.trim();
@@ -23,6 +25,7 @@ module.exports = {
   port: process.env.PORT || 5000,
   mongoURI: process.env.MONGODB_URI || (process.env.NODE_ENV === 'production' ? '' : 'mongodb://127.0.0.1:27017/campusai'),
   databaseURL: process.env.DATABASE_URL || '',
+  adminOnlyMode: isAdminOnlyMode(process.env.ADMIN_ONLY_MODE),
   jwtSecret: process.env.JWT_SECRET || 'campusai_dev_secret',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
   mlServiceUrl: process.env.ML_SERVICE_URL || 'http://localhost:8000',

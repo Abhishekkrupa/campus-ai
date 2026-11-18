@@ -5,6 +5,13 @@ const { randomBytes } = require('crypto');
 const config = require('../config');
 const prisma = require('../config/prisma');
 const { roles, accountTypes } = require('../utils/constants');
+const {
+  isVerifiedSuperAdmin,
+  PRIVATE_MODE_DENIED_CODE,
+  PRIVATE_MODE_DENIED_MESSAGE,
+  PRIVATE_MODE_REGISTRATION_CODE,
+  PRIVATE_MODE_REGISTRATION_MESSAGE,
+} = require('../utils/privateMode');
 
 const generateToken = (id) =>
   jwt.sign(
@@ -29,6 +36,15 @@ const publicUser = (user) => {
 
 const register = async (req, res) => {
   try {
+    // Defense in depth: the centralized guard already blocks registration,
+    // but the controller stays safe if it is ever mounted on another path.
+    if (config.adminOnlyMode) {
+      return res.status(403).json({
+        message: PRIVATE_MODE_REGISTRATION_MESSAGE,
+        code: PRIVATE_MODE_REGISTRATION_CODE,
+      });
+    }
+
     const {
       name,
       username,
@@ -159,6 +175,15 @@ const login = async (req, res) => {
     if (user.status === 'suspended') {
       return res.status(403).json({
         message: 'Account suspended'
+      });
+    }
+
+    // Checked only after credentials are verified so non-admin logins cannot
+    // be used to enumerate which accounts exist.
+    if (config.adminOnlyMode && !isVerifiedSuperAdmin(user)) {
+      return res.status(403).json({
+        message: PRIVATE_MODE_DENIED_MESSAGE,
+        code: PRIVATE_MODE_DENIED_CODE,
       });
     }
 

@@ -15,7 +15,8 @@
     "status": "pm2 status",
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",
-    "prisma:migrate:status": "prisma migrate status"
+    "prisma:migrate:status": "prisma migrate status",
+    "test": "node --test tests/*.test.js"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
@@ -35,6 +36,7 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.0",
-    "prisma": "^6.19.3"
+    "prisma": "^6.19.3",
+    "supertest": "^7.3.2"
   }
 }
